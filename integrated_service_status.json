@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-08-05T13:13:30.376889",
+  "services": {
+    "discord_bot": {
+      "name": "Discord Bot",
+      "status": "Stopped",
+      "pid": null,
+      "auto_restart": true
+    },
+    "flask_server": {
+      "name": "Flask Web Server",
+      "status": "Stopped",
+      "pid": null,
+      "auto_restart": true
+    },
+    "port_proxy": {
+      "name": "Port 80 Proxy",
+      "status": "Stopped",
+      "pid": null,
+      "auto_restart": true
+    }
+  }
+}

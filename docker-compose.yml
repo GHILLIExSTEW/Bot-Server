@@ -1,0 +1,246 @@
+version: "3.8"
+
+services:
+  # Main DBSBM Bot Service
+  betting-bot:
+    build: .
+    container_name: betting-bot
+    restart: unless-stopped
+    environment:
+      # Discord Configuration
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - TEST_GUILD_ID=${TEST_GUILD_ID}
+
+      # API Configuration
+      - API_KEY=${API_KEY}
+      - API_SPORTS_KEY=${API_SPORTS_KEY}
+      - ODDS_API_KEY=${ODDS_API_KEY}
+
+      # Database Configuration (PostgreSQL)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-betting_bot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-betting_bot}
+      - POSTGRES_PORT=5432
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-betting_bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-betting_bot}
+      - DB_POOL_SIZE=20
+      - DB_MAX_OVERFLOW=30
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_TTL=3600
+      - REDIS_SESSION_TTL=86400
+
+      # Webapp Configuration
+      - WEBAPP_PORT=25594
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - HOST=0.0.0.0
+
+      # Application Settings
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - API_TIMEOUT=30
+      - API_RETRY_ATTEMPTS=3
+      - API_RETRY_DELAY=5
+      - CACHE_TTL=3600
+
+      # Security
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./DBSBM/static:/app/DBSBM/static
+      - ./DBSBMWEB/static:/app/DBSBMWEB/static
+
+    networks:
+      - betting-network
+
+    ports:
+      - "25594:25594" # Bot webapp port
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:25594/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # DBSBMWEB Flask Web Application
+  webapp:
+    build: 
+      context: ./DBSBMWEB
+      dockerfile: Dockerfile
+    container_name: betting-webapp
+    restart: unless-stopped
+    environment:
+      # Database Configuration (PostgreSQL)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-betting_bot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-betting_bot}
+      - POSTGRES_PORT=5432
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-betting_bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-betting_bot}
+
+      # Web Application Settings
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - SECRET_KEY=${SECRET_KEY}
+
+      # Redis Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+
+      # Discord OAuth
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+      - DISCORD_REDIRECT_URI=${DISCORD_REDIRECT_URI}
+
+      # Advanced Features
+      - ENABLE_GUILD_SEARCH=true
+      - ENABLE_REAL_TIME_STATS=true
+      - ENABLE_ANALYTICS_CACHE=true
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    volumes:
+      - ./DBSBMWEB/cgi-bin:/app/cgi-bin
+      - ./DBSBMWEB/logs:/app/logs
+      - ./DBSBMWEB/static:/app/static
+
+    networks:
+      - betting-network
+
+    ports:
+      - "25595:25595" # Web application port
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:25595/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database (Advanced Features)
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: betting-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-betting_bot}
+      - POSTGRES_USER=${POSTGRES_USER:-betting_bot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./DBSBM/migrations:/docker-entrypoint-initdb.d
+      - ./postgresql/init:/docker-entrypoint-initdb.d
+    networks:
+      - betting-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-betting_bot} -d ${POSTGRES_DB:-betting_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: betting-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - betting-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: betting-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - betting-bot
+    networks:
+      - betting-network
+    profiles:
+      - nginx
+
+  # Prometheus Monitoring (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: betting-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - betting-network
+    profiles:
+      - monitoring
+
+  # Grafana Dashboard (Optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: betting-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - betting-network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  betting-network:
+    driver: bridge 

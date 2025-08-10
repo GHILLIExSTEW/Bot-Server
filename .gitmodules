@@ -1,0 +1,9 @@
+[submodule "DBSBM"]
+	path = DBSBM
+	url = https://github.com/GHILLIExSTEW/DBSBM.git
+[submodule "ERA"]
+	path = ERA
+	url = https://github.com/GHILLIExSTEW/Electron-React_App.git
+[submodule "DBSBMWEB"]
+	path = DBSBMWEB
+	url = https://github.com/GHILLIExSTEW/DBSBMWEB.git
